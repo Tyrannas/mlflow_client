@@ -1,2 +1,2 @@
-# mlflow_light
+# mlflow_client
 mflow wrapper with controllable dependencies
