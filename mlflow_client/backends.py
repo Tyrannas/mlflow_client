@@ -5,10 +5,13 @@ import os
 import sys
 import json
 import logging
+import shutil
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 from enum import Enum
 from contextlib import contextmanager
+from typing import Iterable, Union
 
 from mlflow_client.utils import get_caller_dir_path
 
@@ -17,7 +20,7 @@ class MLFrameworks(Enum):
     """
     Enum to choose between ml frameworks
     """
-    PYTHON = 0
+    PYFUNC = 0
     SCIKIT_LEARN = 1
     KERAS = 2
     PYTORCH = 3
@@ -49,9 +52,9 @@ def if_run_active(method):
     """
     Prevent logging if no active run is found in the current backend
     """
-    def wrapper(self, *args):
+    def wrapper(self, *args, **kwargs):
         if self._run_started:
-            return method(self, *args)
+            return method(self, *args, **kwargs)
         else:
             raise ValueError("Logging method called without any active run")
     return wrapper
@@ -80,7 +83,7 @@ def get_auto_backend():
 
 class Backend(ABC):
     @abstractmethod
-    def log_metric(self, metric: str, value: int):
+    def log_metric(self, metric: str, value: Union[int, float]):
         """
         Log a metric (only numeric)
         """
@@ -104,12 +107,13 @@ class Backend(ABC):
         pass
 
     @abstractmethod
-    def log_model(self,  model, name: str, library: MLFrameworks = MLFrameworks.PYTHON):
+    def log_model(self, model, output_dir: str, library: MLFrameworks = MLFrameworks.PYFUNC, load_entry_point=None):
         """
         Save the resulting model of the run
-        :param model: an instance of a class
-        :param name: the name of the model
+        :param model: an instance of a class, a persisted instance, or a directory
+        :param output_dir: the name of the dir where the model infos and the model will be persisted
         :param library: the framework used to train the model, must be one of @MLFrameworks
+        :param load_entry_point:
         :return:
         """
         pass
@@ -141,7 +145,7 @@ class LocalBackend(Backend):
         self._run_started = 0
 
     @if_run_active
-    def log_metric(self, metric: str, value: int):
+    def log_metric(self, metric: str, value: Union[int, float]):
         path = os.path.join(self._path, str(self._run_started), 'metrics.json')
         # load existing metrics
         if os.path.exists(path):
@@ -183,35 +187,49 @@ class LocalBackend(Backend):
                 artifact.write(file.read())
 
     @if_run_active
-    def log_model(self, model, name: str = 'model.pkl', library: MLFrameworks = MLFrameworks.PYTHON):
-        if not name and name.split('.')[-1] == name:
-            name = name + '.pkl'
+    def log_model(self, model, output_dir: str = 'model', library: MLFrameworks = MLFrameworks.SCIKIT_LEARN, load_entry_point=None):
 
-        path = os.path.join(self._path, str(self._run_started), 'artifacts', 'model', name)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        path = os.path.join(self._path, str(self._run_started), 'artifacts', output_dir)
+        os.makedirs(path, exist_ok=True)
+
+        metadata = self._get_metadata()
 
         # persist model differently according to used library
         if library == MLFrameworks.SCIKIT_LEARN:
             import sklearn as sk
             import pickle
 
-            with open(os.path.join(self._path, str(self._run_started), "meta.json"), 'r') as f:
-                metadata = json.load(f)
-
+            path = os.path.join(path, "model.pkl")
             metadata['scikit-learn'] = sk.__version__
+
             with open(path, 'wb') as f:
                 pickle.dump(model, f)
 
-        elif library == MLFrameworks.PYTHON:
-            import pickle
-            with open(path, 'wb') as f:
-                pickle.dump(model, f)
+        elif library == MLFrameworks.PYFUNC:
+            if not isinstance(model, str):
+                raise ValueError("For Pyfunc models, model needs to be a path to persisted model or a path to a "
+                                 "directory containing the persisted model(s)")
+
+            metadata['loadEntryPoint'] = load_entry_point
+
+            # respect mlflow directories
+            path = os.path.join(path, 'data')
+
+            # in case of py_func, model is a path or a directory and needs to be copied to the output directory
+            if os.path.isdir(model):
+                path = os.path.join(path, os.path.split(model)[-1])
+                shutil.copytree(model, path)
+            else:
+                shutil.copy(model, path)
         else:
             pass
             # TODO: support more libraries
 
+        metadata['updateTime'] = str(datetime.now())
+        self._save_metadata(metadata)
+
     @contextmanager
-    def start_run(self, run_id: int = None):
+    def start_run(self, run_id: int = None) -> Iterable[LocalBackend]:
         self._run_started = run_id or uuid.uuid1()
         log_path = os.path.join(self._path, str(self._run_started))
         logging.getLogger('mlflow_client').warning(f'Run started with pid {self._run_started} \nLogging at: {log_path}')
@@ -225,6 +243,15 @@ class LocalBackend(Backend):
     @if_run_active
     def end_run(self):
         self._run_started = 0
+
+    def _get_metadata(self):
+        with open(os.path.join(self._path, str(self._run_started), "meta.json"), 'r') as f:
+            metadata = json.load(f)
+        return metadata
+
+    def _save_metadata(self, new_metadata):
+        with open(os.path.join(self._path, str(self._run_started), "meta.json"), 'w') as f:
+            json.dump(new_metadata, f)
 
 
 class MLFlowBackend(Backend):
@@ -242,7 +269,7 @@ class MLFlowBackend(Backend):
         self._run_started = 0
 
     @if_run_active
-    def log_metric(self, metric: str, value: int):
+    def log_metric(self, metric: str, value: Union[int, float]):
         self._mlflow.log_metric(metric, value)
 
     @if_run_active
@@ -254,16 +281,25 @@ class MLFlowBackend(Backend):
         self._mlflow.log_artifact(path_to_file, path_to_save)
 
     @if_run_active
-    def log_model(self, model, name: str = "model", library: MLFrameworks = MLFrameworks.PYTHON):
+    def log_model(self, model, output_dir: str = "model", library: MLFrameworks = MLFrameworks.PYFUNC, load_entry_point=None):
+
         if library == MLFrameworks.SCIKIT_LEARN:
             import mlflow.sklearn
-            mlflow.sklearn.log_model(model, name)
+            mlflow.sklearn.log_model(model, output_dir)
+
+        elif library == MLFrameworks.PYFUNC:
+            if not isinstance(model, str):
+                raise ValueError("For Pyfunc models, model needs to be a path to persisted model or a path to a "
+                                 "directory containing the persisted model(s)")
+            # model_path = model if os.path.isdir(model) else os.path.join(get_caller_dir_path(), model)
+            import mlflow.pyfunc
+            mlflow.pyfunc.log_model(output_dir, loader_module=load_entry_point, data_path=model)
         else:
             pass
-            # TODO: implement more classes, Note: pyfunc seem to be more complicated
+            # TODO: implement more classes
 
     @contextmanager
-    def start_run(self, run_id: int = None) -> MLFlowBackend:
+    def start_run(self, run_id: int = None) -> Iterable[MLFlowBackend]:
         self._run_started = True
         self._mlflow.start_run()
         try:
