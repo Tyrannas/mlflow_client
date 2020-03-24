@@ -1,6 +1,8 @@
 import uuid
 import os
 import sys
+import json
+import logging
 
 from abc import ABC, abstractmethod
 from enum import Enum
@@ -15,6 +17,28 @@ class MLFrameworks(Enum):
     SCIKIT_LEARN = 1
     KERAS = 2
     PYTORCH = 3
+
+
+def log_environnment(path):
+    """
+    Utility function to persist the whole python environnment
+    :return:
+    """
+    infos = {}
+
+    # pip freeze
+    try:
+        from pip._internal.operations import freeze
+    except ImportError:  # pip < 10.0
+        from pip.operations import freeze
+
+    infos['requirements'] = freeze.freeze()
+    infos['python'] = sys.version.split(' ')[0]
+
+    os.makedirs(path, exist_ok=True)
+
+    with open(os.path.join(path, 'meta.json'), 'w') as f:
+        json.dump(infos, f)
 
 
 def if_run_active(method):
@@ -39,10 +63,14 @@ def get_auto_backend():
     try:
         import mlflow
         if 'MLFLOW_TRACKING_URI' in os.environ:
-            return MLFlowBackend(os.environ['MLFLOW_TRACKING_URI'])
+            uri = os.environ['MLFLOW_TRACKING_URI']
+            logging.getLogger("mlflow_client").info(f"AutoBackend configured with MLFlow Distant Backend and URI: {uri}")
+            return MLFlowBackend(uri)
         else:
+            logging.getLogger("mlflow_client").info(f"AutoBackend configured with MLFlow Local Backend")
             return MLFlowBackend()
     except ImportError:
+        logging.getLogger("mlflow_client").info(f"AutoBackend configured with LocalStorage Backend")
         return LocalBackend()
 
 
@@ -109,17 +137,31 @@ class LocalBackend(Backend):
 
     @if_run_active
     def log_metric(self, metric: str, value: int):
-        path = os.path.join(self._path, str(self._run_started), 'metrics', metric)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        path = os.path.join(self._path, str(self._run_started), 'metrics.json')
+        # load existing metrics
+        if os.path.exists(path):
+            with open(path, 'r') as f:
+                metrics = json.load(f)
+        else:
+            metrics = {}
+        metrics[metric] = value
+        # write new metrics
         with open(path, 'w') as f:
-            f.write(str(value))
+            json.dump(metrics, f)
 
     @if_run_active
     def log_parameter(self, parameter: str, value):
-        path = os.path.join(self._path, str(self._run_started), 'parameters', parameter)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        path = os.path.join(self._path, str(self._run_started), 'parameters.json')
+        # load existing parameters
+        if os.path.exists(path):
+            with open(path, 'r') as f:
+                parameters = json.load(f)
+        else:
+            parameters = {}
+        parameters[parameter] = value
+        # write new parameters
         with open(path, 'w') as f:
-            f.write(str(value))
+            json.dump(parameters, f)
 
     @if_run_active
     def log_artifact(self, path_to_file, path_to_save = None):
@@ -143,16 +185,14 @@ class LocalBackend(Backend):
         path = os.path.join(self._path, str(self._run_started), 'artifacts', 'model', name)
         os.makedirs(os.path.dirname(path), exist_ok=True)
 
-        packages_info = ""
-        python_version = sys.version.split(' ')[0]
-        packages_info += python_version + '\n'
-
         if library == MLFrameworks.SCIKIT_LEARN:
             import sklearn as sk
             import pickle
 
-            sk_version = sk.__version__
-            packages_info += sk_version + '\n'
+            with open(os.path.join(self._path, str(self._run_started), "meta.json"), 'r') as f:
+                metadata = json.load(f)
+
+            metadata['scikit-learn'] = sk.__version__
             with open(path, 'wb') as f:
                 pickle.dump(model, f)
 
@@ -164,16 +204,12 @@ class LocalBackend(Backend):
             pass
             # TODO: support more libraries
 
-        # save additional information
-        # TODO: save at same format than MLFlow?
-        with open(os.path.join(os.path.dirname(path), 'info.txt'), 'w') as f:
-            f.write(packages_info)
-
     @contextmanager
     def start_run(self, run_id: int = None):
         self._run_started = run_id if run_id else uuid.uuid1()
+        log_environnment(os.path.join(self._path, str(self._run_started)))
         try:
-            yield self._run_started
+            yield self
         finally:
             self.end_run()
 
