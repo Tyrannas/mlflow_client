@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import uuid
 import os
 import sys
@@ -7,6 +9,8 @@ import logging
 from abc import ABC, abstractmethod
 from enum import Enum
 from contextlib import contextmanager
+
+from mlflow_client.utils import get_caller_dir_path
 
 
 class MLFrameworks(Enum):
@@ -32,7 +36,7 @@ def log_environnment(path):
     except ImportError:  # pip < 10.0
         from pip.operations import freeze
 
-    infos['requirements'] = freeze.freeze()
+    infos['requirements'] = list(freeze.freeze())
     infos['python'] = sys.version.split(' ')[0]
 
     os.makedirs(path, exist_ok=True)
@@ -64,13 +68,13 @@ def get_auto_backend():
         import mlflow
         if 'MLFLOW_TRACKING_URI' in os.environ:
             uri = os.environ['MLFLOW_TRACKING_URI']
-            logging.getLogger("mlflow_client").info(f"AutoBackend configured with MLFlow Distant Backend and URI: {uri}")
+            logging.getLogger("mlflow_client").warning(f"AutoBackend configured with MLFlow Distant Backend and URI: {uri}")
             return MLFlowBackend(uri)
         else:
-            logging.getLogger("mlflow_client").info(f"AutoBackend configured with MLFlow Local Backend")
+            logging.getLogger("mlflow_client").warning(f"AutoBackend configured with MLFlow Local Backend")
             return MLFlowBackend()
     except ImportError:
-        logging.getLogger("mlflow_client").info(f"AutoBackend configured with LocalStorage Backend")
+        logging.getLogger("mlflow_client").warning(f"AutoBackend configured with LocalStorage Backend")
         return LocalBackend()
 
 
@@ -131,7 +135,8 @@ class LocalBackend(Backend):
     Store metrics, parameters and artifacts without any need of importing mlflow
     """
     def __init__(self, path=None):
-        root_path = path if path else os.path.dirname(__file__)
+        # if no path is defined, the run will be created at the location of the file calling LocalBackend
+        root_path = path or get_caller_dir_path()
         self._path = os.path.join(root_path, 'mlruns')
         self._run_started = 0
 
@@ -178,13 +183,14 @@ class LocalBackend(Backend):
                 artifact.write(file.read())
 
     @if_run_active
-    def log_model(self, model, name: str = None, library: MLFrameworks = MLFrameworks.PYTHON):
-        if not name:
-            name = str(uuid.uuid1()) + '.pkl'
+    def log_model(self, model, name: str = 'model.pkl', library: MLFrameworks = MLFrameworks.PYTHON):
+        if not name and name.split('.')[-1] == name:
+            name = name + '.pkl'
 
         path = os.path.join(self._path, str(self._run_started), 'artifacts', 'model', name)
         os.makedirs(os.path.dirname(path), exist_ok=True)
 
+        # persist model differently according to used library
         if library == MLFrameworks.SCIKIT_LEARN:
             import sklearn as sk
             import pickle
@@ -206,8 +212,11 @@ class LocalBackend(Backend):
 
     @contextmanager
     def start_run(self, run_id: int = None):
-        self._run_started = run_id if run_id else uuid.uuid1()
-        log_environnment(os.path.join(self._path, str(self._run_started)))
+        self._run_started = run_id or uuid.uuid1()
+        log_path = os.path.join(self._path, str(self._run_started))
+        logging.getLogger('mlflow_client').warning(f'Run started with pid {self._run_started} \nLogging at: {log_path}')
+        log_environnment(log_path)
+
         try:
             yield self
         finally:
@@ -254,10 +263,11 @@ class MLFlowBackend(Backend):
             # TODO: implement more classes, Note: pyfunc seem to be more complicated
 
     @contextmanager
-    def start_run(self, run_id: int = None):
+    def start_run(self, run_id: int = None) -> MLFlowBackend:
         self._run_started = True
+        self._mlflow.start_run()
         try:
-            yield self._mlflow.start_run()
+            yield self
         finally:
             self.end_run()
 
