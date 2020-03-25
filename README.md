@@ -51,5 +51,5 @@ with mlf.start_run():
     model.fit()
     model.save_models('local_path')
     # note: library can be omitted since default value is already PYFUNC
-    mlf.log_model(model='local_path', load_entry_point=my_module.core.MyClass, library=MLFrameworks.PYFUNC)
+    mlf.log_model(model='local_path', load_entry_point='my_module.core.MyClass', library=MLFrameworks.PYFUNC)
 ```
