@@ -146,6 +146,9 @@ class LocalBackend(Backend):
 
     @if_run_active
     def log_metric(self, metric: str, value: Union[int, float]):
+        if isinstance(value, str):
+            raise ValueError('Metrics should be only numerical')
+
         path = os.path.join(self._path, str(self._run_started), 'metrics.json')
         # load existing metrics
         if os.path.exists(path):
@@ -182,9 +185,7 @@ class LocalBackend(Backend):
         os.makedirs(os.path.dirname(path), exist_ok=True)
 
         # TODO: check if log_artifact cannot directly be inputed a buffer instead of a source path
-        with open(path_to_file, 'rb') as file:
-            with open(path, 'wb') as artifact:
-                artifact.write(file.read())
+        shutil.copy(path_to_file, path)
 
     @if_run_active
     def log_model(self, model, output_dir: str = 'model', library: MLFrameworks = MLFrameworks.PYFUNC, load_entry_point=None):
@@ -209,6 +210,8 @@ class LocalBackend(Backend):
             if not isinstance(model, str):
                 raise ValueError("For Pyfunc models, model needs to be a path to persisted model or a path to a "
                                  "directory containing the persisted model(s)")
+            if not load_entry_point:
+                raise ValueError("For Pyfunc models, param load_entry_point needs to be passed")
 
             metadata['loadEntryPoint'] = load_entry_point
 
@@ -230,7 +233,11 @@ class LocalBackend(Backend):
 
     @contextmanager
     def start_run(self, run_id: int = None) -> Iterable[LocalBackend]:
+
         self._run_started = run_id or uuid.uuid1()
+        if self._run_started == 0:
+            raise ValueError("Run Id cannot be None or 0")
+
         log_path = os.path.join(self._path, str(self._run_started))
         logging.getLogger('mlflow_client').warning(f'Run started with pid {self._run_started} \nLogging at: {log_path}')
         log_environnment(log_path)
