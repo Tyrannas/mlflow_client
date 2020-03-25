@@ -187,7 +187,7 @@ class LocalBackend(Backend):
                 artifact.write(file.read())
 
     @if_run_active
-    def log_model(self, model, output_dir: str = 'model', library: MLFrameworks = MLFrameworks.SCIKIT_LEARN, load_entry_point=None):
+    def log_model(self, model, output_dir: str = 'model', library: MLFrameworks = MLFrameworks.PYFUNC, load_entry_point=None):
 
         path = os.path.join(self._path, str(self._run_started), 'artifacts', output_dir)
         os.makedirs(path, exist_ok=True)
