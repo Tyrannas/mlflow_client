@@ -156,7 +156,10 @@ class LocalBackend(Backend):
                 metrics = json.load(f)
         else:
             metrics = {}
-        metrics[metric] = value
+
+        # create entry if not existing and add value to it
+        metrics.setdefault(metric, []).append(value)
+
         # write new metrics
         with open(path, 'w') as f:
             json.dump(metrics, f)
@@ -170,7 +173,10 @@ class LocalBackend(Backend):
                 parameters = json.load(f)
         else:
             parameters = {}
-        parameters[parameter] = value
+
+        # create entry if not existing and add value to it
+        parameters.setdefault(parameter, []).append(value)
+
         # write new parameters
         with open(path, 'w') as f:
             json.dump(parameters, f)
