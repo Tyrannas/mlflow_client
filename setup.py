@@ -14,7 +14,7 @@ SETUP_REQUIRES = ['setuptools', 'setuptools-git', 'wheel']
 INSTALL_REQUIRES = parse_requirements('requirements.txt')
 TEST_REQUIRES = ['pytest']
 EXTRAS_REQUIRES = {
-    'mlflow': 'mlflow'
+    'mlflow': ['mlflow']
 }
 
 
@@ -23,8 +23,8 @@ def setup_package():
                     version=VERSION,
                     install_requires=INSTALL_REQUIRES,
                     setup_requires=SETUP_REQUIRES,
-                    extras_requires=EXTRAS_REQUIRES,
-                    test_requires=TEST_REQUIRES,
+                    extras_require=EXTRAS_REQUIRES,
+                    tests_require=TEST_REQUIRES,
                     packages=find_packages())
 
     setup(**metadata)
