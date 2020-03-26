@@ -45,7 +45,7 @@ def log_environnment(path):
     os.makedirs(path, exist_ok=True)
 
     with open(os.path.join(path, 'meta.json'), 'w') as f:
-        json.dump(infos, f)
+        json.dump(infos, f, indent=4)
 
 
 def if_run_active(method):
@@ -162,7 +162,7 @@ class LocalBackend(Backend):
 
         # write new metrics
         with open(path, 'w') as f:
-            json.dump(metrics, f)
+            json.dump(metrics, f, indent=4)
 
     @if_run_active
     def log_parameter(self, parameter: str, value):
@@ -179,7 +179,7 @@ class LocalBackend(Backend):
 
         # write new parameters
         with open(path, 'w') as f:
-            json.dump(parameters, f)
+            json.dump(parameters, f, indent=4)
 
     @if_run_active
     def log_artifact(self, path_to_file, path_to_save = None):
@@ -264,7 +264,7 @@ class LocalBackend(Backend):
 
     def _save_metadata(self, new_metadata):
         with open(os.path.join(self._path, str(self._run_started), "meta.json"), 'w') as f:
-            json.dump(new_metadata, f)
+            json.dump(new_metadata, f, indent=4)
 
 
 class MLFlowBackend(Backend):
