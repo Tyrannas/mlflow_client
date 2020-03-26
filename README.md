@@ -3,10 +3,14 @@ MLFlow wrapper with controllable dependencies
 Can be used for people who want to experiment locally with mlflow 
 # Usage
 #### Install
+For basic light version use:
 ```
-pip install mlflow_client
+pip install mlflow-client
 ```
-
+Else if you want to use the mlflow packaged version:
+```
+pip install mlflow-client[mlflow]
+```
 #### Code
 Just select the backend that you want to use:
 - LocalBackend: without MLFLow, reproduce the behaviour
