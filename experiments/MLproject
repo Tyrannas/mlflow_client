@@ -1,0 +1,4 @@
+name: TestModel
+entry_points:
+  main:
+    command: "python main.py"
