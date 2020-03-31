@@ -6,7 +6,7 @@ if __name__ == "__main__":
     # backend = get_auto_backend()
 
     # backend = MLFlowBackend()
-    backend = LocalBackend()
+    backend = LocalBackend(hooks_uri="http://sgai-api/api/hooks")
     with backend.start_run() as mf:
         model = DummyClassifier()
         X, y = np.array([0, 1, 0, 1, 1, 0]), np.array([1, 0, 1, 0, 0, 1])

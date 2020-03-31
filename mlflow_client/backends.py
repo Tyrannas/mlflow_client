@@ -6,6 +6,7 @@ import sys
 import json
 import logging
 import shutil
+import functools
 
 from abc import ABC, abstractmethod
 from datetime import datetime
@@ -13,6 +14,7 @@ from enum import Enum
 from contextlib import contextmanager
 from typing import Iterable, Union
 
+from hooks import resolve_hooks, Hooks, send_hook
 from mlflow_client.utils import get_caller_dir_path
 
 
@@ -81,7 +83,11 @@ def get_auto_backend():
         return LocalBackend()
 
 
-class Backend(ABC):
+class AbstractBackend(ABC):
+    """
+    Abstract class to defined the base methods of a backend
+    """
+
     @abstractmethod
     def log_metric(self, metric: str, value: Union[int, float]):
         """
@@ -134,11 +140,51 @@ class Backend(ABC):
         pass
 
 
-class LocalBackend(Backend):
+class WithHooks(object):
+    """
+    Class decorator
+    Decorates a Backend to provide hooks on some methods
+    """
+    def __init__(self):
+        pass
+
+    def __call__(self, cls):
+        class BackendWithHooks(cls):
+            """
+            SubClass of the decorated Backend that implements Hooks
+            """
+            def __init__(self, *args, **kwargs):
+                # TODO: the problem is that hooks uri is not documented when creating a LocalBackend for example
+                uri = kwargs['hooks_uri'] if 'hooks_uri' in kwargs else None
+                self.hooks = resolve_hooks(uri)
+                super().__init__(*args, **kwargs)
+
+            def start_run(self, *args, **kwargs):
+                self._process_hooks(Hooks.RUN_STARTED)
+                super().start_run(*args, **kwargs)
+
+            def end_run(self, *args, **kwargs):
+                self._process_hooks(Hooks.RUN_ENDED)
+                super().end_run(*args, **kwargs)
+
+            def _process_hooks(self, action: Hooks):
+                """
+                For the specified @action, evaluate all hooks and for each hook send it
+                """
+                if action.name.lower() in self.hooks:
+                    for hook in self.hooks:
+                        # TODO: unmock experiment name and run_id
+                        send_hook(action, 'experiment', 0, hook['url'])
+
+        return BackendWithHooks
+
+
+@WithHooks()
+class LocalBackend(AbstractBackend):
     """
     Store metrics, parameters and artifacts without any need of importing mlflow
     """
-    def __init__(self, path=None):
+    def __init__(self, path=None, *args, **kwargs):
         # if no path is defined, the run will be created at the location of the file calling LocalBackend
         root_path = path or get_caller_dir_path()
         self._path = os.path.join(root_path, 'mlruns')
@@ -267,7 +313,7 @@ class LocalBackend(Backend):
             json.dump(new_metadata, f, indent=4)
 
 
-class MLFlowBackend(Backend):
+class MLFlowBackend(AbstractBackend):
     """
     Simple Backend wrapper for the classic mlflow behaviour
     """
