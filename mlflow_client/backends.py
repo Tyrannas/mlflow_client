@@ -14,7 +14,7 @@ from enum import Enum
 from contextlib import contextmanager
 from typing import Iterable, Union
 
-from hooks import resolve_hooks, Hooks, send_hook
+from hook import resolve_hooks, Hook, send_hook
 from mlflow_client.utils import get_caller_dir_path
 
 
@@ -149,25 +149,25 @@ class WithHooks(object):
         pass
 
     def __call__(self, cls):
+
         class BackendWithHooks(cls):
             """
             SubClass of the decorated Backend that implements Hooks
             """
-            def __init__(self, *args, **kwargs):
+            def __init__(self, hooks_uri=None, *args, **kwargs):
                 # TODO: the problem is that hooks uri is not documented when creating a LocalBackend for example
-                uri = kwargs['hooks_uri'] if 'hooks_uri' in kwargs else None
-                self.hooks = resolve_hooks(uri)
+                self.hooks = resolve_hooks(hooks_uri)
                 super().__init__(*args, **kwargs)
 
             def start_run(self, *args, **kwargs):
-                self._process_hooks(Hooks.RUN_STARTED)
+                self._process_hooks(Hook.RUN_STARTED)
                 super().start_run(*args, **kwargs)
 
             def end_run(self, *args, **kwargs):
-                self._process_hooks(Hooks.RUN_ENDED)
+                self._process_hooks(Hook.RUN_ENDED)
                 super().end_run(*args, **kwargs)
 
-            def _process_hooks(self, action: Hooks):
+            def _process_hooks(self, action: Hook):
                 """
                 For the specified @action, evaluate all hooks and for each hook send it
                 """
