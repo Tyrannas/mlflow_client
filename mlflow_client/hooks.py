@@ -1,4 +1,5 @@
 import datetime
+import functools
 import json
 import os
 import yaml
@@ -12,8 +13,8 @@ Hooks template file:
 {
      'run_started': [
         {
-            'name': 'firstHook'
-            'url': 'http://localhost/new_run
+            'name': 'firstHook',
+            'url': 'http://localhost/hooks
         }
         ...
      ]
@@ -25,6 +26,40 @@ Hooks template file:
 class Hook(Enum):
     RUN_STARTED = 0
     RUN_ENDED = 1
+
+
+def with_hooks(event: Hook):
+    """
+    Function that takes an event as parameter and returns a decorator that wraps a method,
+    execute it and then send a hook if a hook exists.
+    In case of failure the status is set to failed
+    :param event:
+    :return:
+    """
+    def decorator(method):
+        @functools.wraps(method)
+        def wrapper(self, *args, **kwargs):
+            error = None
+            try:
+                method(self, *args, **kwargs)
+                status = "success"
+                message = None
+            except Exception as e:
+                status = "failed"
+                message = str(e)
+                error = e
+
+            if event.name.lower() in self._hooks:
+                for hook in self._hooks[event.name.lower()]:
+                    send_hook(action=event, experiment_name=self._experiment_name, run_id=self._run_id, url=hook['url'],
+                              status=status, message=message)
+
+            # now that the failed hook has been sent, raise the error
+            if error:
+                raise error
+
+        return wrapper
+    return decorator
 
 
 def resolve_hooks(hooks_uri=None):
@@ -72,16 +107,18 @@ def resolve_hooks(hooks_uri=None):
             raise ValueError("Hooks URI provided not recognized as a valid url, folder or file")
 
 
-def send_hook(action: Hook, experiment_name, run_id, url):
+def send_hook(action: Hook, experiment_name, run_id, url, status="success", message=None):
     """
     Create the hook object and send it to the specified URI
     """
     hook = {
         'event': action.name,
+        'status': status,
         'timestamp': datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
         'payload': {
             'experiment': experiment_name,
-            'run': run_id
+            'run': str(run_id),
+            'message': message
         }
     }
     requests.post(url, json=hook)

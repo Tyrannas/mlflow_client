@@ -18,7 +18,7 @@ Just select the backend that you want to use:
 
 All methods will work whatever backend you're choosing
 ```python
-from mlflow_client import get_auto_backend, LocalBackend, MLFlowBackend, MLFrameworks
+from mlflow_client import get_auto_run, LocalRun, MLFlowRun, MLFramework
 from sklearn.dummy import  DummyClassifier
 
 # mlf = LocalBackend() # runs will be stored in current directory
@@ -36,7 +36,7 @@ with mlf.start_run():
     mlf.log_metric('loss', 3.30)
     mlf.log_artifact('/path/to/some/plot.png')
     # specify the type of the model that you want to persist
-    mlf.log_model(model=model, output_dir='dummy_model', library=MLFrameworks.SCIKIT_LEARN)
+    mlf.log_model(model=model, output_dir='dummy_model', library=MLFramework.SCIKIT_LEARN)
 ```
 
 If your model is not pure scikit or not pure (any other ml library), you can persist it as PyFunc:

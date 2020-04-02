@@ -6,7 +6,7 @@ import pytest
 
 from unittest.mock import patch
 
-from mlflow_client import LocalBackend, MLFlowBackend, get_auto_backend, MLFrameworks
+from mlflow_client import LocalRun, MLFlowRun, get_auto_run, MLFramework
 from .utils import mock_mlflow_installed, mock_mlflow_not_installed
 
 
@@ -14,10 +14,10 @@ def create_backends():
     """
     Check if every backend can be created without problem
     """
-    LocalBackend()
-    LocalBackend('.')
-    MLFlowBackend()
-    MLFlowBackend('http://localhost:5000')
+    LocalRun()
+    LocalRun('.')
+    MLFlowRun()
+    MLFlowRun('http://localhost:5000')
 
 
 # The following tests are all on LocalBackend, one suppose that mlflow unit tests are already written
@@ -28,7 +28,7 @@ def test_log_parameter():
     Test parameters logging
     """
     with tempfile.TemporaryDirectory() as path:
-        mlf = LocalBackend(path)
+        mlf = LocalRun(path)
         with mlf.start_run(1):
             # log a float
             mlf.log_parameter('alpha', 0.05)
@@ -48,7 +48,7 @@ def test_log_metric():
     Test metrics logging
     """
     with tempfile.TemporaryDirectory() as path:
-        mlf = LocalBackend(path)
+        mlf = LocalRun(path)
         with mlf.start_run(1):
             # log a float
             mlf.log_metric('mse', 3.5)
@@ -69,7 +69,7 @@ def test_log_artifact():
     Test artifacts logging
     """
     with tempfile.TemporaryDirectory() as path:
-        mlf = LocalBackend(path)
+        mlf = LocalRun(path)
         with mlf.start_run(1):
             base_path = os.path.join(path, 'mlruns', '1', 'artifacts')
 
@@ -103,11 +103,11 @@ def test_log_scikit_model():
     Test scikit-learn model logging
     """
     with tempfile.TemporaryDirectory() as path:
-        mlf = LocalBackend(path)
+        mlf = LocalRun(path)
         with mlf.start_run(1):
             fake_model = dict(predict="fake")
             base_path = os.path.join(path, 'mlruns', '1', 'artifacts', 'output_dir', 'model.pkl')
-            mlf.log_model(fake_model, 'output_dir', MLFrameworks.SCIKIT_LEARN)
+            mlf.log_model(fake_model, 'output_dir', MLFramework.SCIKIT_LEARN)
 
             assert os.path.exists(base_path)
             with open(base_path, 'rb') as f:
@@ -117,7 +117,7 @@ def test_log_scikit_model():
 
 def test_log_pyfunc_model():
     with tempfile.TemporaryDirectory() as path:
-        mlf = LocalBackend(path)
+        mlf = LocalRun(path)
         with mlf.start_run(1):
             output_path = os.path.join(path, 'mlruns', '1', 'artifacts', 'models', 'data')
             fake_model = dict(predict="fake")
@@ -128,14 +128,14 @@ def test_log_pyfunc_model():
                 pickle.dump(fake_model, f)
 
             # log a whole directory
-            mlf.log_model(source_path, 'models', load_entry_point='my_module.my_class', library=MLFrameworks.PYFUNC)
+            mlf.log_model(source_path, 'models', load_entry_point='my_module.my_class', library=MLFramework.PYFUNC)
 
             output_file = os.path.join(output_path, 'resources', 'model.pkl')
             assert os.path.exists(output_file)
             assert os.path.isfile(output_file)
 
             # log a single file
-            mlf.log_model(os.path.join(source_path, 'model.pkl'), 'models', load_entry_point="my_module.my_class", library=MLFrameworks.PYFUNC)
+            mlf.log_model(os.path.join(source_path, 'model.pkl'), 'models', load_entry_point="my_module.my_class", library=MLFramework.PYFUNC)
 
             output_file = os.path.join(output_path, 'model.pkl')
             assert os.path.exists(output_file)
@@ -143,7 +143,7 @@ def test_log_pyfunc_model():
 
             # verify that load_entry_point is mandatory
             with pytest.raises(ValueError):
-                mlf.log_model(source_path, 'models', library=MLFrameworks.PYFUNC)
+                mlf.log_model(source_path, 'models', library=MLFramework.PYFUNC)
 
 
 def test_logging_without_run():
@@ -151,7 +151,7 @@ def test_logging_without_run():
     Test if logging methods are blocked if no run was started before
     """
 
-    mlf = LocalBackend()
+    mlf = LocalRun()
 
     with pytest.raises(ValueError):
         mlf.log_parameter('alpha', 0.05)
@@ -172,19 +172,19 @@ def test_auto_backend():
     """
     # if mlflow is not installed
     with patch('builtins.__import__', new=mock_mlflow_not_installed):
-        mlf = get_auto_backend()
-        assert isinstance(mlf, LocalBackend)
+        mlf = get_auto_run()
+        assert isinstance(mlf, LocalRun)
 
     # if mlflow is installed
 
     with patch.dict('os.environ', {}, clear=True):
         with patch('builtins.__import__', new=mock_mlflow_installed):
             # if mlflow is only installed locally
-            mlf = get_auto_backend()
-            assert isinstance(mlf, MLFlowBackend)
+            mlf = get_auto_run()
+            assert isinstance(mlf, MLFlowRun)
 
             # if a distant uri is specified
             os.environ['MLFLOW_TRACKING_URI'] = 'mock:5000'
-            mlf = get_auto_backend()
-            assert isinstance(mlf, MLFlowBackend)
+            mlf = get_auto_run()
+            assert isinstance(mlf, MLFlowRun)
             assert os.environ.get('URI') == 'mock:5000'

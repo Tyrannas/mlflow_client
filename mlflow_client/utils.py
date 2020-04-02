@@ -1,5 +1,7 @@
+import json
 import os
 import inspect
+import sys
 
 
 def get_caller_dir_path():
@@ -12,3 +14,25 @@ def get_caller_dir_path():
     # make the path absolute (optional)
     dir_path = os.path.dirname(os.path.abspath(file_path))
     return dir_path
+
+
+def log_environnment(path):
+    """
+    Utility function to persist the whole python environnment
+    :return:
+    """
+    infos = {}
+
+    # pip freeze
+    try:
+        from pip._internal.operations import freeze
+    except ImportError:  # pip < 10.0
+        from pip.operations import freeze
+
+    infos['requirements'] = list(freeze.freeze())
+    infos['python'] = sys.version.split(' ')[0]
+
+    os.makedirs(path, exist_ok=True)
+
+    with open(os.path.join(path, 'meta.json'), 'w') as f:
+        json.dump(infos, f, indent=4)
