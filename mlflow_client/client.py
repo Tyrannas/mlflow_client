@@ -2,9 +2,10 @@ import os
 import logging
 
 from enum import Enum
+from typing import Union
 
-from hooks import resolve_hooks, Hook
-from runs import MLFlowRun, LocalRun
+from mlflow_client.hooks import resolve_hooks, Hook
+from mlflow_client.runs import MLFlowRun, LocalRun
 
 
 class Backend(Enum):
@@ -12,7 +13,7 @@ class Backend(Enum):
     MLFLOW = 1
 
 
-def get_auto_run(hooks):
+def get_auto_run(hooks=None):
     """
     Returns a backend automatically
     LocalBackend if mlflow is not found
@@ -34,7 +35,7 @@ def get_auto_run(hooks):
 
 
 class MLClient:
-    def __init__(self, backend: Backend = None, backend_uri=None, experiment="default_experiment", hooks_uri=None):
+    def __init__(self, backend: Union[Backend, str] = None, backend_uri=None, experiment="default_experiment", hooks_uri=None):
         self._hooks = resolve_hooks(hooks_uri)
         self._backend = backend
         self._experiment = experiment

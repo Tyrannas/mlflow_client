@@ -26,6 +26,12 @@ class MLFramework(Enum):
     KERAS = 2
     PYTORCH = 3
 
+    def __eq__(self, other):
+        if self.value == other.value:
+            return True
+        else:
+            return False
+
 
 class AbstractRun(ABC):
     """
