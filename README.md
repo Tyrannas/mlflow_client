@@ -71,7 +71,7 @@ You can have a look at all the possibilities [here](https://github.com/Tyrannas/
 #### WebHooks
 MLFlow Client allows you to configure hooks that will be triggered during the run. 
 The currently supported format is the following:
-```json
+```
 {
   "event_name" (run_started | run_ended): [
       {
@@ -92,7 +92,7 @@ There are several ways to configure your run to use hooks:
 - use client.add_hook(event=, name=, url=) on an MLClient instance **before** starting the run
 
 When the event occurs the url specified will receive the following payload: 
-```json
+```
 {
     "event": EVENT NAME,
     "status": (success | failed),
