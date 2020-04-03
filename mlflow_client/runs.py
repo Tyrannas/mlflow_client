@@ -1,22 +1,23 @@
-from __future__ import annotations
-
-import uuid
-import os
-import sys
 import json
 import logging
+import os
 import shutil
-
+import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime
 from enum import Enum
-from contextlib import contextmanager
-from typing import Iterable, Union
+from typing import Union
 
-from mlflow_client.utils import get_caller_dir_path
+from hooks import with_hooks, Hook
+from utils import log_environnment
+
+try:
+    import mlflow
+except ImportError:
+    pass
 
 
-class MLFrameworks(Enum):
+class MLFramework(Enum):
     """
     Enum to choose between ml frameworks
     """
@@ -25,63 +26,19 @@ class MLFrameworks(Enum):
     KERAS = 2
     PYTORCH = 3
 
-
-def log_environnment(path):
-    """
-    Utility function to persist the whole python environnment
-    :return:
-    """
-    infos = {}
-
-    # pip freeze
-    try:
-        from pip._internal.operations import freeze
-    except ImportError:  # pip < 10.0
-        from pip.operations import freeze
-
-    infos['requirements'] = list(freeze.freeze())
-    infos['python'] = sys.version.split(' ')[0]
-
-    os.makedirs(path, exist_ok=True)
-
-    with open(os.path.join(path, 'meta.json'), 'w') as f:
-        json.dump(infos, f, indent=4)
-
-
-def if_run_active(method):
-    """
-    Prevent logging if no active run is found in the current backend
-    """
-    def wrapper(self, *args, **kwargs):
-        if self._run_started:
-            return method(self, *args, **kwargs)
+    def __eq__(self, other):
+        if self.value == other.value:
+            return True
         else:
-            raise ValueError("Logging method called without any active run")
-    return wrapper
+            return False
 
 
-def get_auto_backend():
+class AbstractRun(ABC):
     """
-    Returns a backend automatically
-    LocalBackend if mlflow is not found
-    MLFLow Local if mlflow is found
-    MLFlow Server if mlflow is found and MLFLOW_TRACKING_URI defined in env variables
+    Abstract class to defined the base methods of a Run Object
+    A Run Object is created
     """
-    try:
-        import mlflow
-        if 'MLFLOW_TRACKING_URI' in os.environ:
-            uri = os.environ['MLFLOW_TRACKING_URI']
-            logging.getLogger("mlflow_client").warning(f"AutoBackend configured with MLFlow Distant Backend and URI: {uri}")
-            return MLFlowBackend(uri)
-        else:
-            logging.getLogger("mlflow_client").warning(f"AutoBackend configured with MLFlow Local Backend")
-            return MLFlowBackend()
-    except ImportError:
-        logging.getLogger("mlflow_client").warning(f"AutoBackend configured with LocalStorage Backend")
-        return LocalBackend()
 
-
-class Backend(ABC):
     @abstractmethod
     def log_metric(self, metric: str, value: Union[int, float]):
         """
@@ -107,7 +64,7 @@ class Backend(ABC):
         pass
 
     @abstractmethod
-    def log_model(self, model, output_dir: str, library: MLFrameworks = MLFrameworks.PYFUNC, load_entry_point=None):
+    def log_model(self, model, output_dir: str, library: MLFramework = MLFramework.PYFUNC, load_entry_point=None):
         """
         Save the resulting model of the run
         :param model: an instance of a class, a persisted instance, or a directory
@@ -134,22 +91,29 @@ class Backend(ABC):
         pass
 
 
-class LocalBackend(Backend):
+class LocalRun(AbstractRun):
     """
     Store metrics, parameters and artifacts without any need of importing mlflow
     """
-    def __init__(self, path=None):
+    def __init__(self, path='.', experiment_name="DefaultExperiment", hooks=None):
         # if no path is defined, the run will be created at the location of the file calling LocalBackend
-        root_path = path or get_caller_dir_path()
-        self._path = os.path.join(root_path, 'mlruns')
-        self._run_started = 0
+        self._hooks = hooks
+        self._run_id = None
+        self._run_started = False
+        self._experiment_name = experiment_name
+        self._path = os.path.join(path, 'mlruns', self._experiment_name)
 
-    @if_run_active
+    def __enter__(self):
+        return self
+
+    def __exit__(self, type, value, traceback):
+        self.end_run()
+
     def log_metric(self, metric: str, value: Union[int, float]):
         if isinstance(value, str):
             raise ValueError('Metrics should be only numerical')
 
-        path = os.path.join(self._path, str(self._run_started), 'metrics.json')
+        path = os.path.join(self._path, 'metrics.json')
         # load existing metrics
         if os.path.exists(path):
             with open(path, 'r') as f:
@@ -164,9 +128,8 @@ class LocalBackend(Backend):
         with open(path, 'w') as f:
             json.dump(metrics, f, indent=4)
 
-    @if_run_active
     def log_parameter(self, parameter: str, value):
-        path = os.path.join(self._path, str(self._run_started), 'parameters.json')
+        path = os.path.join(self._path, 'parameters.json')
         # load existing parameters
         if os.path.exists(path):
             with open(path, 'r') as f:
@@ -181,28 +144,26 @@ class LocalBackend(Backend):
         with open(path, 'w') as f:
             json.dump(parameters, f, indent=4)
 
-    @if_run_active
     def log_artifact(self, path_to_file, path_to_save = None):
         name = os.path.split(path_to_file)[-1]
         if path_to_save:
             name = os.path.join(path_to_save, name)
 
-        path = os.path.join(self._path, str(self._run_started), 'artifacts', name)
+        path = os.path.join(self._path, 'artifacts', name)
         os.makedirs(os.path.dirname(path), exist_ok=True)
 
         # TODO: check if log_artifact cannot directly be inputed a buffer instead of a source path
         shutil.copy(path_to_file, path)
 
-    @if_run_active
-    def log_model(self, model, output_dir: str = 'model', library: MLFrameworks = MLFrameworks.PYFUNC, load_entry_point=None):
+    def log_model(self, model, output_dir: str = 'model', library: MLFramework = MLFramework.PYFUNC, load_entry_point=None):
 
-        path = os.path.join(self._path, str(self._run_started), 'artifacts', output_dir)
+        path = os.path.join(self._path, 'artifacts', output_dir)
         os.makedirs(path, exist_ok=True)
 
         metadata = self._get_metadata()
 
         # persist model differently according to used library
-        if library == MLFrameworks.SCIKIT_LEARN:
+        if library == MLFramework.SCIKIT_LEARN:
             import sklearn as sk
             import pickle
 
@@ -212,7 +173,7 @@ class LocalBackend(Backend):
             with open(path, 'wb') as f:
                 pickle.dump(model, f)
 
-        elif library == MLFrameworks.PYFUNC:
+        elif library == MLFramework.PYFUNC:
             if not isinstance(model, str):
                 raise ValueError("For Pyfunc models, model needs to be a path to persisted model or a path to a "
                                  "directory containing the persisted model(s)")
@@ -237,94 +198,98 @@ class LocalBackend(Backend):
         metadata['updateTime'] = str(datetime.now())
         self._save_metadata(metadata)
 
-    @contextmanager
-    def start_run(self, run_id: int = None) -> Iterable[LocalBackend]:
+    @with_hooks(Hook.RUN_STARTED)
+    def start_run(self, run_id: int = None):
 
-        self._run_started = run_id or uuid.uuid1()
-        if self._run_started == 0:
-            raise ValueError("Run Id cannot be None or 0")
+        self._run_id = run_id or uuid.uuid1()
+        self._run_started = True
+        self._path = os.path.join(self._path,  str(self._run_id))
 
-        log_path = os.path.join(self._path, str(self._run_started))
-        logging.getLogger('mlflow_client').warning(f'Run started with pid {self._run_started} \nLogging at: {log_path}')
-        log_environnment(log_path)
+        logging.getLogger('mlflow_client').warning(f'Run started with pid {self._run_id} \nLogging at: {self._path}')
+        log_environnment(self._path)
 
-        try:
-            yield self
-        finally:
-            self.end_run()
-
-    @if_run_active
+    @with_hooks(Hook.RUN_ENDED)
     def end_run(self):
-        self._run_started = 0
+        self._run_started = False
 
     def _get_metadata(self):
-        with open(os.path.join(self._path, str(self._run_started), "meta.json"), 'r') as f:
+        with open(os.path.join(self._path, "meta.json"), 'r') as f:
             metadata = json.load(f)
         return metadata
 
     def _save_metadata(self, new_metadata):
-        with open(os.path.join(self._path, str(self._run_started), "meta.json"), 'w') as f:
+        with open(os.path.join(self._path, "meta.json"), 'w') as f:
             json.dump(new_metadata, f, indent=4)
 
 
-class MLFlowBackend(Backend):
+class MLFlowRun(AbstractRun):
     """
     Simple Backend wrapper for the classic mlflow behaviour
     """
-    def __init__(self, uri=None):
-        try:
-            import mlflow
-            self._mlflow = mlflow
-        except ImportError:
-            raise ImportError("Trying to create an MLFlowBackend while mlflow is not present on the machine")
+    def __init__(self, uri=None, hooks=None, experiment_name=None):
         if uri:
             mlflow.set_tracking_uri(uri)
-        self._run_started = 0
+        self._run_started = False
+        self._hooks = hooks
 
-    @if_run_active
+        # set requested experiment if existing else create it
+        # FIXME: setting manually experiment might lead into conflicts
+        # if experiment_name:
+        #     experiment = mlflow.get_experiment_by_name(experiment_name)
+        #     if experiment:
+        #         mlflow.set_experiment(experiment_name)
+        #     else:
+        #         mlflow.create_experiment(experiment_name)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, type, value, traceback):
+        self.end_run()
+
+    @property
+    def _run_id(self):
+        return mlflow.active_run().info.run_id
+
+    @property
+    def _experiment_id(self):
+        return mlflow.active_run().info.experiment_id
+
+    @property
+    def _experiment_name(self):
+        return mlflow.get_experiment(self._experiment_id).name
+
     def log_metric(self, metric: str, value: Union[int, float]):
-        self._mlflow.log_metric(metric, value)
+        mlflow.log_metric(metric, value)
 
-    @if_run_active
     def log_parameter(self, parameter: str, value):
-        self._mlflow.log_param(parameter, value)
+        mlflow.log_param(parameter, value)
 
-    @if_run_active
     def log_artifact(self, path_to_file, path_to_save=None):
-        self._mlflow.log_artifact(path_to_file, path_to_save)
+        mlflow.log_artifact(path_to_file, path_to_save)
 
-    @if_run_active
-    def log_model(self, model, output_dir: str = "model", library: MLFrameworks = MLFrameworks.PYFUNC, load_entry_point=None):
+    def log_model(self, model, output_dir: str = "model", library: MLFramework = MLFramework.PYFUNC, load_entry_point=None):
 
-        if library == MLFrameworks.SCIKIT_LEARN:
+        if library == MLFramework.SCIKIT_LEARN:
             import mlflow.sklearn
             mlflow.sklearn.log_model(model, output_dir)
 
-        elif library == MLFrameworks.PYFUNC:
+        elif library == MLFramework.PYFUNC:
             if not isinstance(model, str):
                 raise ValueError("For Pyfunc models, model needs to be a path to persisted model or a path to a "
                                  "directory containing the persisted model(s)")
-            # model_path = model if os.path.isdir(model) else os.path.join(get_caller_dir_path(), model)
+
             import mlflow.pyfunc
             mlflow.pyfunc.log_model(output_dir, loader_module=load_entry_point, data_path=model)
         else:
             pass
             # TODO: implement more classes
 
-    @contextmanager
-    def start_run(self, run_id: int = None) -> Iterable[MLFlowBackend]:
+    @with_hooks(Hook.RUN_STARTED)
+    def start_run(self, run_id: int = None):
         self._run_started = True
-        self._mlflow.start_run()
-        try:
-            yield self
-        finally:
-            self.end_run()
+        mlflow.start_run(run_id=run_id)
 
-    @if_run_active
+    @with_hooks(Hook.RUN_ENDED)
     def end_run(self):
-        self._mlflow.end_run()
-
-
-
-
-
+        mlflow.end_run()
