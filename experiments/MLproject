@@ -2,3 +2,11 @@ name: TestModel
 entry_points:
   main:
     command: "python main.py"
+hooks:
+  run_started:
+    - name: "my_hook"
+      url: "http://localhost:8080/hooks"
+    - name: "my_other_hook"
+      url: "http://localhost:8080/hooks"
+  run_ended:
+    - url: "http://localhost:8080/other"
