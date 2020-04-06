@@ -1,6 +1,7 @@
 import datetime
 import functools
 import json
+import logging
 import os
 import yaml
 import requests
@@ -80,13 +81,17 @@ def resolve_hooks(hooks_uri=None):
         else:
             return {}
 
-    # TODO: change this to regex validation? with package validators ?
     try:
         # try to fetch as an url
         res = requests.get(hooks_uri)
         return res.json()
 
-    except requests.exceptions.RequestException:
+    except requests.exceptions.ConnectionError or requests.exceptions.ConnectTimeout:
+        logging.getLogger('mlflow_client').warning(f'Hooks uri {hooks_uri} seems to be an url but the server did not '
+                                                   f'respond, continuing without hooks.')
+        return {}
+
+    except requests.exceptions.InvalidURL or requests.exceptions.InvalidURL:
         if os.path.isdir(hooks_uri):
             # assume there is an MLproject file
             path = os.path.join(hooks_uri, 'MLproject')
@@ -121,4 +126,7 @@ def send_hook(action: Hook, experiment_name, run_id, url, status="success", mess
             'message': message
         }
     }
-    requests.post(url, json=hook)
+    try:
+        requests.post(url, json=hook)
+    except requests.exceptions.RequestException as e:
+        logging.getLogger('mlflow_client').warning(f'Hook post at {url} did not succeed: {str(e)}, continuing mlflow execution and ignoring this exception.')

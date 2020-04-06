@@ -8,8 +8,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Union
 
-from hooks import with_hooks, Hook
-from utils import log_environnment
+from mlflow_client.hooks import with_hooks, Hook
+from mlflow_client.utils import log_environnment
 
 try:
     import mlflow
